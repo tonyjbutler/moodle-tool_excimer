@@ -491,19 +491,47 @@ function xmldb_tool_excimer_upgrade($oldversion) {
     }
 
     if ($oldversion < 2024082301) {
-        // First we need to drop a few edge cases that have a length of 256.
-        $DB->delete_records_select('tool_excimer_page_groups', $DB->sql_length('name') . ' > 255');
+        $exists = $DB->record_exists_select('tool_excimer_page_groups', $DB->sql_length('name') . ' > 255');
+        if ($exists) {
+            // Change precision of name to 255 so it can be used as an index.
+            // First we need to drop a few edge cases that have a length of 256.
+            $DB->delete_records_select('tool_excimer_page_groups', $DB->sql_length('name') . ' > 255');
+        }
 
-        // SQL to delete duplicates while keeping the first occurrence.
-        $sql = "DELETE FROM {tool_excimer_page_groups}
+        // Check if there are any duplicates to be deleted by counting the
+        // expected total against the number of records in the table.
+        $expectedcount = $DB->count_records_sql('
+            SELECT count(*) FROM (
+                SELECT MIN(id) AS id
+                  FROM mdl_tool_excimer_page_groups
+                GROUP BY LOWER(name), month
+            ) a
+        ');
+        $recordcount = $DB->count_records('tool_excimer_page_groups');
+        $needsdedupe = $expectedcount !== $recordcount;
+
+        if ($needsdedupe) {
+            // Get ids to delete. This is still faster to query than handling
+            // everything in a DELETE WHERE NOT IN on certain DBs.
+            $removeids = $DB->get_fieldset_sql('
+                SELECT id
+                  FROM {tool_excimer_page_groups}
                  WHERE id NOT IN (
                      SELECT MIN(id)
-                       FROM (select * from {tool_excimer_page_groups}) a
-                   GROUP BY LOWER(name), month
-                 )";
+                       FROM {tool_excimer_page_groups}
+                      GROUP BY LOWER(name), month
+                 )');
 
-        // Execute the delete query.
-        $DB->execute($sql);
+            // Remove the records in batch sizes of the following.
+            // Batchsize is arbitrary.
+            $batchsize = 1000;
+            $chunks = array_chunk($removeids, $batchsize);
+
+            foreach ($chunks as $chunk) {
+                [$insql, $inparams] = $DB->get_in_or_equal($chunk);
+                $DB->delete_records_select('tool_excimer_page_groups', "id $insql", $inparams);
+            }
+        }
 
         // Change precision of name to 255 so it can be used as an index.
         $table = new xmldb_table('tool_excimer_page_groups');
