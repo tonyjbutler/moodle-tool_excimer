@@ -162,7 +162,7 @@ class helper {
      * @return string
      */
     public static function http_status_display(int $status): string {
-        $spanclass = 'badge ' . self::STATUS_BADGES[$status / 100];
+        $spanclass = 'badge ' . self::STATUS_BADGES[floor($status / 100)];
         return \html_writer::tag('span', $status, ['class' => $spanclass]);
     }
 
